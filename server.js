@@ -119,9 +119,3 @@ const express = require('express');
      console.log(`Server running on port ${port}`);
      await initDatabase();
    });
-```
-
-   **.gitignore**:
-```
-   node_modules/
-   .env
