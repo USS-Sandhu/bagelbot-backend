@@ -21,18 +21,18 @@ const pool = new Pool({
 async function initDatabase() {
   const client = await pool.connect();
   try {
-    // Added name and phone_number columns to the schema
+    // We use "phoneNumber" in double quotes to preserve camelCase in Postgres
     await client.query(`
       CREATE TABLE IF NOT EXISTS entries (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100),
-        phone_number VARCHAR(20),
+        "phoneNumber" VARCHAR(20),
         message TEXT NOT NULL,
         status VARCHAR(20) DEFAULT 'New',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('Database table initialized with Name and Phone fields');
+    console.log('Database table initialized with Name and phoneNumber fields');
   } catch (err) {
     console.error('Error initializing database:', err);
   } finally {
@@ -45,16 +45,15 @@ async function initDatabase() {
 // POST /submit - Receive form data
 app.post('/submit', async (req, res) => {
   try {
-    // Destructure name and phoneNumber from the frontend request
     const { name, phoneNumber, message } = req.body;
     
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Insert all three pieces of data into the DB
+    // Must use double quotes for the column name here too
     const result = await pool.query(
-      'INSERT INTO entries (name, phone_number, message, status) VALUES ($1, $2, $3, $4) RETURNING *',
+      'INSERT INTO entries (name, "phoneNumber", message, status) VALUES ($1, $2, $3, $4) RETURNING *',
       [name, phoneNumber, message, 'New']
     );
 
@@ -69,7 +68,6 @@ app.post('/submit', async (req, res) => {
 app.get('/entries', async (req, res) => {
   try {
     const { status } = req.query;
-    
     let query = 'SELECT * FROM entries';
     let params = [];
     
@@ -114,12 +112,10 @@ app.put('/entries/:id/status', async (req, res) => {
   }
 });
 
-// Health check
 app.get('/', (req, res) => {
   res.json({ status: 'BagelBot backend is running' });
 });
 
-// Start server
 app.listen(port, async () => {
   console.log(`Server running on port ${port}`);
   await initDatabase();
