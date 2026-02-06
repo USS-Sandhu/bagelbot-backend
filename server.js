@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 require('dotenv').config();
-
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -25,6 +24,7 @@ async function initDatabase() {
     await client.query(`
       CREATE TABLE IF NOT EXISTS entries (
         id SERIAL PRIMARY KEY,
+        "orderNumber" INTEGER,
         name VARCHAR(100),
         "phoneNumber" VARCHAR(20),
         message TEXT NOT NULL,
@@ -40,8 +40,36 @@ async function initDatabase() {
   }
 }
 
-// Routes
+// Helper function to get today's date string (YYYY-MM-DD)
+function getTodayDateString() {
+  const now = new Date();
+  return now.toISOString().split('T')[0];
+}
 
+// Helper function to get next order number for today
+async function getNextOrderNumber() {
+  try {
+    const today = getTodayDateString();
+    
+    // Get the highest order number from today
+    const result = await pool.query(
+      `SELECT MAX("orderNumber") as max_order 
+       FROM entries 
+       WHERE DATE(created_at) = $1`,
+      [today]
+    );
+    
+    const maxOrder = result.rows[0]?.max_order;
+    
+    // If no orders today, start at 100, otherwise increment
+    return maxOrder ? maxOrder + 1 : 100;
+  } catch (err) {
+    console.error('Error getting next order number:', err);
+    throw err;
+  }
+}
+
+// Routes
 // POST /submit - Receive form data
 app.post('/submit', async (req, res) => {
   try {
@@ -51,13 +79,22 @@ app.post('/submit', async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Must use double quotes for the column name here too
+    // Get the next order number for today
+    const orderNumber = await getNextOrderNumber();
+    
     const result = await pool.query(
-      'INSERT INTO entries (name, "phoneNumber", message, status) VALUES ($1, $2, $3, $4) RETURNING *',
-      [name, phoneNumber, message, 'New']
+      'INSERT INTO entries ("orderNumber", name, "phoneNumber", message, status) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [orderNumber, name, phoneNumber, message, 'New']
     );
-
-    res.json({ success: true, entry: result.rows[0] });
+    
+    // Return orderNumber as id for frontend compatibility
+    res.json({ 
+      success: true, 
+      entry: { 
+        ...result.rows[0],
+        id: result.rows[0].orderNumber 
+      } 
+    });
   } catch (err) {
     console.error('Error submitting entry:', err);
     res.status(500).json({ error: 'Failed to submit entry' });
@@ -95,16 +132,13 @@ app.put('/entries/:id/status', async (req, res) => {
     if (!status) {
       return res.status(400).json({ error: 'Status is required' });
     }
-
     const result = await pool.query(
       'UPDATE entries SET status = $1 WHERE id = $2 RETURNING *',
       [status, id]
     );
-
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Entry not found' });
     }
-
     res.json({ success: true, entry: result.rows[0] });
   } catch (err) {
     console.error('Error updating entry:', err);
