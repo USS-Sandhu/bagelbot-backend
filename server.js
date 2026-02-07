@@ -23,7 +23,6 @@ const pool = new Pool({
 async function initDatabase() {
   const client = await pool.connect();
   try {
-    // We use "phoneNumber" in double quotes to preserve camelCase in Postgres
     await client.query(`
       CREATE TABLE IF NOT EXISTS entries (
         id SERIAL PRIMARY KEY,
@@ -64,14 +63,12 @@ async function getNextOrderNumber() {
 
     const maxOrder = result.rows[0]?.max_order;
 
-    // Extra hardening:
-    // - MAX can come back as null (no rows)
-    // - pg can return numeric-ish values as strings
-    // - parse + validate to ensure we always do numeric addition
-    const maxParsed = maxOrder === null || maxOrder === undefined
-      ? NaN
-      : parseInt(String(maxOrder), 10);
+    // If no orders today, start at 100, otherwise increment
+    if (maxOrder === null || maxOrder === undefined) {
+      return 100;
+    }
 
+    const maxParsed = parseInt(String(maxOrder), 10);
     return Number.isFinite(maxParsed) ? maxParsed + 1 : 100;
 
   } catch (err) {
@@ -98,16 +95,13 @@ app.post('/submit', async (req, res) => {
       [orderNumber, name, phoneNumber, message, 'New']
     );
 
-    // NOTE:
-    // You previously returned orderNumber as id for frontend compatibility.
-    // Now that the app displays orderNumber but processes by DB id, you should
-    // keep returning the real id and the orderNumber separately.
-    //
-    // If you still have older clients expecting id=orderNumber, you can keep
-    // that mapping temporarily, but it will break status updates that rely on id.
+    // Return orderNumber as id for frontend display
     res.json({
       success: true,
-      entry: result.rows[0]
+      entry: {
+        ...result.rows[0],
+        id: orderNumber
+      }
     });
 
   } catch (err) {
