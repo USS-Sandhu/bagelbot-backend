@@ -19,7 +19,7 @@ const pool = new Pool({
     : false
 });
 
-// Initialize database table (snake_case)
+// Initialize database tables (snake_case)
 async function initDatabase() {
   const client = await pool.connect();
   try {
@@ -34,12 +34,32 @@ async function initDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('Database table initialized (snake_case)');
+    
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS store_status (
+        id SERIAL PRIMARY KEY,
+        store_closed BOOLEAN DEFAULT false,
+        notes TEXT
+      )
+    `);
+    
+    console.log('Database tables initialized (snake_case)');
   } catch (err) {
     console.error('Error initializing database:', err);
   } finally {
     client.release();
   }
+}
+
+// API Key middleware for store-status endpoints
+function checkApiKey(req, res, next) {
+  const apiKey = req.headers['x-api-key'];
+  const VALID_KEY = process.env.STORE_ADMIN_KEY || 'bagel2024secret';
+  
+  if (!apiKey || apiKey !== VALID_KEY) {
+    return res.status(403).json({ error: 'Unauthorized - Invalid API key' });
+  }
+  next();
 }
 
 // Helper: YYYY-MM-DD (UTC-safe for Postgres DATE)
@@ -103,7 +123,7 @@ app.post('/submit', async (req, res) => {
     res.json({
       success: true,
       entry: {
-        id: row.id,
+        id: row.order_number, // Frontend expects orderNumber as id
         orderNumber: row.order_number,
         name: row.name,
         phoneNumber: row.phone_number,
@@ -193,6 +213,58 @@ app.put('/entries/:id/status', async (req, res) => {
   } catch (err) {
     console.error('Error updating entry:', err);
     res.status(500).json({ error: 'Failed to update entry' });
+  }
+});
+
+// Store status endpoint - GET (Protected with API key)
+app.get('/store-status', checkApiKey, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT store_closed, notes FROM store_status LIMIT 1'
+    );
+    
+    if (result.rows.length === 0) {
+      // If no row exists, create the initial row
+      await pool.query(
+        'INSERT INTO store_status (store_closed, notes) VALUES ($1, $2)',
+        [false, '']
+      );
+      return res.json({ store_closed: false, notes: '' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error fetching store status:', err);
+    res.status(500).json({ error: 'Failed to fetch store status' });
+  }
+});
+
+// Store status endpoint - PUT (Protected with API key)
+app.put('/store-status', checkApiKey, async (req, res) => {
+  try {
+    const { store_closed, notes } = req.body;
+    
+    // Check if a row exists
+    const checkResult = await pool.query('SELECT id FROM store_status LIMIT 1');
+    
+    if (checkResult.rows.length === 0) {
+      // Insert first row
+      const result = await pool.query(
+        'INSERT INTO store_status (store_closed, notes) VALUES ($1, $2) RETURNING *',
+        [store_closed, notes || '']
+      );
+      res.json({ success: true, status: result.rows[0] });
+    } else {
+      // Update the existing row
+      const result = await pool.query(
+        'UPDATE store_status SET store_closed = $1, notes = $2 WHERE id = $3 RETURNING *',
+        [store_closed, notes || '', checkResult.rows[0].id]
+      );
+      res.json({ success: true, status: result.rows[0] });
+    }
+  } catch (err) {
+    console.error('Error updating store status:', err);
+    res.status(500).json({ error: 'Failed to update store status' });
   }
 });
 
