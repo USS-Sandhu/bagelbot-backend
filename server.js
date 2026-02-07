@@ -50,19 +50,21 @@ function getTodayDateString() {
 async function getNextOrderNumber() {
   try {
     const today = getTodayDateString();
-    
-    // Get the highest order number from today
+
     const result = await pool.query(
-      `SELECT MAX("orderNumber") as max_order 
-       FROM entries 
+      `SELECT MAX("orderNumber") AS max_order
+       FROM entries
        WHERE DATE(created_at) = $1`,
       [today]
     );
-    
+
     const maxOrder = result.rows[0]?.max_order;
-    
-    // If no orders today, start at 100, otherwise increment
-    return maxOrder ? maxOrder + 1 : 100;
+
+    // IMPORTANT: force numeric addition
+    return maxOrder !== null
+      ? Number(maxOrder) + 1
+      : 100;
+
   } catch (err) {
     console.error('Error getting next order number:', err);
     throw err;
