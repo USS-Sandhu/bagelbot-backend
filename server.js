@@ -19,22 +19,22 @@ const pool = new Pool({
     : false
 });
 
-// Initialize database table
+// Initialize database table (snake_case)
 async function initDatabase() {
   const client = await pool.connect();
   try {
     await client.query(`
       CREATE TABLE IF NOT EXISTS entries (
         id SERIAL PRIMARY KEY,
-        "orderNumber" INTEGER,
+        order_number INTEGER,
         name VARCHAR(100),
-        "phoneNumber" VARCHAR(20),
+        phone_number VARCHAR(20),
         message TEXT NOT NULL,
         status VARCHAR(20) DEFAULT 'New',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('Database table initialized with Name and phoneNumber fields');
+    console.log('Database table initialized (snake_case)');
   } catch (err) {
     console.error('Error initializing database:', err);
   } finally {
@@ -42,20 +42,18 @@ async function initDatabase() {
   }
 }
 
-// Helper function to get today's date string (YYYY-MM-DD)
+// Helper: YYYY-MM-DD (UTC-safe for Postgres DATE)
 function getTodayDateString() {
-  const now = new Date();
-  return now.toISOString().split('T')[0];
+  return new Date().toISOString().split('T')[0];
 }
 
-// Helper function to get next order number for today
+// Helper: next order number (starts at 100 daily)
 async function getNextOrderNumber() {
   try {
     const today = getTodayDateString();
 
-    // Get the highest order number from today
     const result = await pool.query(
-      `SELECT MAX("orderNumber") AS max_order
+      `SELECT MAX(order_number) AS max_order
        FROM entries
        WHERE DATE(created_at) = $1`,
       [today]
@@ -63,13 +61,12 @@ async function getNextOrderNumber() {
 
     const maxOrder = result.rows[0]?.max_order;
 
-    // If no orders today, start at 100, otherwise increment
     if (maxOrder === null || maxOrder === undefined) {
       return 100;
     }
 
-    const maxParsed = parseInt(String(maxOrder), 10);
-    return Number.isFinite(maxParsed) ? maxParsed + 1 : 100;
+    const parsed = parseInt(String(maxOrder), 10);
+    return Number.isFinite(parsed) ? parsed + 1 : 100;
 
   } catch (err) {
     console.error('Error getting next order number:', err);
@@ -77,8 +74,11 @@ async function getNextOrderNumber() {
   }
 }
 
+// ------------------------------------------------------------
 // Routes
-// POST /submit - Receive form data
+// ------------------------------------------------------------
+
+// POST /submit
 app.post('/submit', async (req, res) => {
   try {
     const { name, phoneNumber, message } = req.body;
@@ -87,20 +87,29 @@ app.post('/submit', async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Get the next order number for today
     const orderNumber = await getNextOrderNumber();
 
     const result = await pool.query(
-      'INSERT INTO entries ("orderNumber", name, "phoneNumber", message, status) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      `INSERT INTO entries
+       (order_number, name, phone_number, message, status)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
       [orderNumber, name, phoneNumber, message, 'New']
     );
 
-    // Return orderNumber as id for frontend display
+    const row = result.rows[0];
+
+    // IMPORTANT: return REAL id + display orderNumber
     res.json({
       success: true,
       entry: {
-        ...result.rows[0],
-        id: orderNumber
+        id: row.id,
+        orderNumber: row.order_number,
+        name: row.name,
+        phoneNumber: row.phone_number,
+        message: row.message,
+        status: row.status,
+        created_at: row.created_at
       }
     });
 
@@ -110,11 +119,22 @@ app.post('/submit', async (req, res) => {
   }
 });
 
-// GET /entries - Get entries by status
+// GET /entries
 app.get('/entries', async (req, res) => {
   try {
     const { status } = req.query;
-    let query = 'SELECT * FROM entries';
+
+    let query = `
+      SELECT
+        id,
+        order_number AS "orderNumber",
+        name,
+        phone_number AS "phoneNumber",
+        message,
+        status,
+        created_at
+      FROM entries
+    `;
     const params = [];
 
     if (status) {
@@ -133,7 +153,7 @@ app.get('/entries', async (req, res) => {
   }
 });
 
-// PUT /entries/:id/status - Update entry status
+// PUT /entries/:id/status
 app.put('/entries/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
@@ -144,7 +164,10 @@ app.put('/entries/:id/status', async (req, res) => {
     }
 
     const result = await pool.query(
-      'UPDATE entries SET status = $1 WHERE id = $2 RETURNING *',
+      `UPDATE entries
+       SET status = $1
+       WHERE id = $2
+       RETURNING *`,
       [status, id]
     );
 
@@ -152,7 +175,20 @@ app.put('/entries/:id/status', async (req, res) => {
       return res.status(404).json({ error: 'Entry not found' });
     }
 
-    res.json({ success: true, entry: result.rows[0] });
+    const row = result.rows[0];
+
+    res.json({
+      success: true,
+      entry: {
+        id: row.id,
+        orderNumber: row.order_number,
+        name: row.name,
+        phoneNumber: row.phone_number,
+        message: row.message,
+        status: row.status,
+        created_at: row.created_at
+      }
+    });
 
   } catch (err) {
     console.error('Error updating entry:', err);
